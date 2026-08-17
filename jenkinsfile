@@ -106,7 +106,7 @@ pipeline {
             steps {
                 withCredentials([
                     [$class: 'AmazonWebServicesCredentialsBinding',
-                     credentialsId: 'aws-ecr-credentials']
+                     credentialsId: 'ecr-credentials']
                 ]) {
 
                     sh '''
