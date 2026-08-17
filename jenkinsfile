@@ -3,8 +3,8 @@ pipeline {
 
     environment {
         AWS_REGION = 'ap-south-1'
-        AWS_ACCOUNT_ID = '559220132560'
-        ECR_REPOSITORY = 'sanidhya'
+        AWS_ACCOUNT_ID = '392211784456'
+        ECR_REPOSITORY = 'sanidhya-ecr'
 
         ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
@@ -41,11 +41,11 @@ pipeline {
 
         stage('Code QA Execution') {
             steps {
-                echo 'Junit Test case check in progress!'
+                echo 'JUnit Test case check in progress!'
 
-                sh 'mvn clean test'
+                sh 'mvn test'
 
-                echo 'Junit Test case check is completed'
+                echo 'JUnit Test case check is completed'
             }
         }
 
@@ -53,7 +53,7 @@ pipeline {
             steps {
                 echo 'Code packaging is starting'
 
-                sh 'mvn clean package'
+                sh 'mvn package -DskipTests'
 
                 echo 'Code packaging is completed'
             }
@@ -117,6 +117,8 @@ pipeline {
                         --password-stdin ${ECR_REGISTRY}
                     '''
                 }
+
+                echo 'ECR login completed'
             }
         }
 
