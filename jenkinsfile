@@ -1,0 +1,174 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION = 'ap-south-1'
+        AWS_ACCOUNT_ID = '559220132560'
+        ECR_REPOSITORY = 'sanidhya'
+
+        ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+        IMAGE_TAG = "${BUILD_NUMBER}"
+
+        DOCKER_IMAGE = "kaustubh10k/sanidhya"
+        ECR_IMAGE = "${ECR_REGISTRY}/${ECR_REPOSITORY}"
+    }
+
+    options {
+        buildDiscarder(
+            logRotator(
+                numToKeepStr: '5',
+                artifactNumToKeepStr: '5'
+            )
+        )
+    }
+
+    tools {
+        maven 'maven_3.9.16'
+    }
+
+    stages {
+
+        stage('Code Compilation') {
+            steps {
+                echo 'Code compilation is starting'
+
+                sh 'mvn clean compile'
+
+                echo 'Code compilation is completed'
+            }
+        }
+
+        stage('Code QA Execution') {
+            steps {
+                echo 'Junit Test case check in progress!'
+
+                sh 'mvn clean test'
+
+                echo 'Junit Test case check is completed'
+            }
+        }
+
+        stage('Code Package') {
+            steps {
+                echo 'Code packaging is starting'
+
+                sh 'mvn clean package'
+
+                echo 'Code packaging is completed'
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                echo 'Starting Docker image build'
+
+                sh '''
+                    docker build \
+                        -t ${DOCKER_IMAGE}:${IMAGE_TAG} \
+                        -t ${DOCKER_IMAGE}:latest \
+                        .
+                '''
+
+                echo 'Docker image build completed'
+            }
+        }
+
+        stage('Push to Docker Hub') {
+            steps {
+                withCredentials([
+                    string(
+                        credentialsId: 'dockerhubCred',
+                        variable: 'DOCKERHUB_TOKEN'
+                    )
+                ]) {
+
+                    sh '''
+                        echo "${DOCKERHUB_TOKEN}" | \
+                        docker login \
+                        --username kaustubh10k \
+                        --password-stdin
+                    '''
+
+                    echo 'Pushing image to Docker Hub'
+
+                    sh '''
+                        docker push ${DOCKER_IMAGE}:${IMAGE_TAG}
+                        docker push ${DOCKER_IMAGE}:latest
+                    '''
+
+                    echo 'Docker Hub push completed'
+                }
+            }
+        }
+
+        stage('Login to Amazon ECR') {
+            steps {
+                withCredentials([
+                    [$class: 'AmazonWebServicesCredentialsBinding',
+                     credentialsId: 'aws-ecr-credentials']
+                ]) {
+
+                    sh '''
+                        aws ecr get-login-password \
+                        --region ${AWS_REGION} | \
+                        docker login \
+                        --username AWS \
+                        --password-stdin ${ECR_REGISTRY}
+                    '''
+                }
+            }
+        }
+
+        stage('Tag Image for ECR') {
+            steps {
+                echo 'Tagging Docker image for ECR'
+
+                sh '''
+                    docker tag \
+                        ${DOCKER_IMAGE}:latest \
+                        ${ECR_IMAGE}:latest
+
+                    docker tag \
+                        ${DOCKER_IMAGE}:${IMAGE_TAG} \
+                        ${ECR_IMAGE}:${IMAGE_TAG}
+                '''
+
+                echo 'ECR tagging completed'
+            }
+        }
+
+        stage('Push Image to ECR') {
+            steps {
+                echo 'Pushing Docker image to ECR'
+
+                sh '''
+                    docker push ${ECR_IMAGE}:latest
+                    docker push ${ECR_IMAGE}:${IMAGE_TAG}
+                '''
+
+                echo 'ECR push completed'
+            }
+        }
+    }
+
+    post {
+        always {
+            sh '''
+                docker logout ${ECR_REGISTRY} || true
+                docker logout || true
+            '''
+        }
+
+        success {
+            echo 'Pipeline completed successfully'
+
+            echo "Docker Hub Image: ${DOCKER_IMAGE}:${IMAGE_TAG}"
+            echo "ECR Image: ${ECR_IMAGE}:${IMAGE_TAG}"
+        }
+
+        failure {
+            echo 'Pipeline failed'
+        }
+    }
+}
