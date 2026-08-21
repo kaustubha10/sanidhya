@@ -21,6 +21,8 @@ pipeline {
                 artifactNumToKeepStr: '5'
             )
         )
+
+        timestamps()
     }
 
     tools {
@@ -29,9 +31,32 @@ pipeline {
 
     stages {
 
+        /*
+         * =========================
+         * 1. CODE CHECKOUT
+         * =========================
+         */
+
+        stage('Checkout') {
+            steps {
+                echo 'Checking out source code...'
+
+                checkout scm
+
+                echo 'Source code checkout completed'
+            }
+        }
+
+
+        /*
+         * =========================
+         * 2. CODE COMPILATION
+         * =========================
+         */
+
         stage('Code Compilation') {
             steps {
-                echo 'Code compilation is starting'
+                echo 'Code compilation is starting...'
 
                 sh 'mvn clean compile'
 
@@ -39,19 +64,77 @@ pipeline {
             }
         }
 
-        stage('Code QA Execution') {
+
+        /*
+         * =========================
+         * 3. JUNIT TEST
+         * =========================
+         */
+
+        stage('JUnit Test') {
             steps {
-                echo 'JUnit Test case check in progress!'
+                echo 'JUnit test execution is starting...'
 
                 sh 'mvn test'
 
-                echo 'JUnit Test case check is completed'
+                echo 'JUnit test execution is completed'
+            }
+
+            post {
+                always {
+                    junit '**/target/surefire-reports/*.xml'
+                }
             }
         }
 
+
+        /*
+         * =========================
+         * 4. SONARQUBE ANALYSIS
+         * =========================
+         */
+
+        stage('SonarQube Analysis') {
+            steps {
+                echo 'SonarQube analysis is starting...'
+
+                withSonarQubeEnv('sonar-server') {
+                    sh 'mvn sonar:sonar'
+                }
+
+                echo 'SonarQube analysis completed'
+            }
+        }
+
+
+        /*
+         * =========================
+         * 5. QUALITY GATE
+         * =========================
+         */
+
+        stage('Quality Gate') {
+            steps {
+                echo 'Waiting for SonarQube Quality Gate...'
+
+                timeout(time: 10, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+
+                echo 'SonarQube Quality Gate passed'
+            }
+        }
+
+
+        /*
+         * =========================
+         * 6. PACKAGE APPLICATION
+         * =========================
+         */
+
         stage('Code Package') {
             steps {
-                echo 'Code packaging is starting'
+                echo 'Code packaging is starting...'
 
                 sh 'mvn package -DskipTests'
 
@@ -59,9 +142,16 @@ pipeline {
             }
         }
 
+
+        /*
+         * =========================
+         * 7. BUILD DOCKER IMAGE
+         * =========================
+         */
+
         stage('Build Docker Image') {
             steps {
-                echo 'Starting Docker image build'
+                echo 'Starting Docker image build...'
 
                 sh '''
                     docker build \
@@ -74,7 +164,14 @@ pipeline {
             }
         }
 
-        stage('Push to Docker Hub') {
+
+        /*
+         * =========================
+         * 8. DOCKER HUB LOGIN
+         * =========================
+         */
+
+        stage('Login to Docker Hub') {
             steps {
                 withCredentials([
                     string(
@@ -89,18 +186,38 @@ pipeline {
                         --username kaustubh10k \
                         --password-stdin
                     '''
-
-                    echo 'Pushing image to Docker Hub'
-
-                    sh '''
-                        docker push ${DOCKER_IMAGE}:${IMAGE_TAG}
-                        docker push ${DOCKER_IMAGE}:latest
-                    '''
-
-                    echo 'Docker Hub push completed'
                 }
+
+                echo 'Docker Hub login completed'
             }
         }
+
+
+        /*
+         * =========================
+         * 9. PUSH TO DOCKER HUB
+         * =========================
+         */
+
+        stage('Push to Docker Hub') {
+            steps {
+                echo 'Pushing Docker image to Docker Hub...'
+
+                sh '''
+                    docker push ${DOCKER_IMAGE}:${IMAGE_TAG}
+                    docker push ${DOCKER_IMAGE}:latest
+                '''
+
+                echo 'Docker Hub push completed'
+            }
+        }
+
+
+        /*
+         * =========================
+         * 10. AWS ECR LOGIN
+         * =========================
+         */
 
         stage('Login to Amazon ECR') {
             steps {
@@ -122,9 +239,16 @@ pipeline {
             }
         }
 
+
+        /*
+         * =========================
+         * 11. TAG IMAGE FOR ECR
+         * =========================
+         */
+
         stage('Tag Image for ECR') {
             steps {
-                echo 'Tagging Docker image for ECR'
+                echo 'Tagging Docker image for ECR...'
 
                 sh '''
                     docker tag \
@@ -140,9 +264,16 @@ pipeline {
             }
         }
 
+
+        /*
+         * =========================
+         * 12. PUSH IMAGE TO ECR
+         * =========================
+         */
+
         stage('Push Image to ECR') {
             steps {
-                echo 'Pushing Docker image to ECR'
+                echo 'Pushing Docker image to ECR...'
 
                 sh '''
                     docker push ${ECR_IMAGE}:latest
@@ -154,8 +285,18 @@ pipeline {
         }
     }
 
+
+    /*
+     * =========================
+     * POST BUILD
+     * =========================
+     */
+
     post {
+
         always {
+            echo 'Cleaning up Docker credentials...'
+
             sh '''
                 docker logout ${ECR_REGISTRY} || true
                 docker logout || true
@@ -163,14 +304,21 @@ pipeline {
         }
 
         success {
-            echo 'Pipeline completed successfully'
+            echo '=========================================='
+            echo 'PIPELINE COMPLETED SUCCESSFULLY'
+            echo '=========================================='
 
             echo "Docker Hub Image: ${DOCKER_IMAGE}:${IMAGE_TAG}"
+            echo "Docker Hub Latest: ${DOCKER_IMAGE}:latest"
+
             echo "ECR Image: ${ECR_IMAGE}:${IMAGE_TAG}"
+            echo "ECR Latest: ${ECR_IMAGE}:latest"
         }
 
         failure {
-            echo 'Pipeline failed'
+            echo '=========================================='
+            echo 'PIPELINE FAILED'
+            echo '=========================================='
         }
     }
 }
